@@ -2,6 +2,8 @@
 
 Custom component for Home Assistant to fetch day-ahead electricity spot prices for European countries. Prices are exposed as sensors and can be used in automations to schedule equipment at the cheapest moments. A 24-hour forecast is available in the sensor attributes and can be visualized in a graph:
 
+> This project started as a fork of [hass-entso-e](https://github.com/JaccoR/hass-entso-e).
+
 <p align="center">
     <img src="https://user-images.githubusercontent.com/31140879/195382579-c87b3285-c599-4e30-867e-1acf9feffabe.png" width=40% height=40%>
 </p>
