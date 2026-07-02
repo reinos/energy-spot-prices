@@ -1,0 +1,286 @@
+"""Energy Spot Prices — current electricity price information service."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from homeassistant.components.sensor import (
+    RestoreSensor,
+    SensorDeviceClass,
+    SensorEntityDescription,
+    SensorStateClass,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE
+from homeassistant.core import HassJob, HomeAssistant
+from homeassistant.helpers import event
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import StateType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import utcnow, slugify
+
+from .utils import bucket_time
+from .const import (
+    ATTRIBUTION,
+    CONF_CURRENCY,
+    CONF_ENERGY_SCALE,
+    CONF_ENTITY_NAME,
+    DEFAULT_CURRENCY,
+    DEFAULT_ENERGY_SCALE,
+    DOMAIN,
+)
+from .coordinator import EntsoeCoordinator
+from .utils import get_interval_minutes
+
+_LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class EntsoeEntityDescription(SensorEntityDescription):
+    """Describes ENTSO-e sensor entity."""
+
+    value_fn: Callable[[dict], StateType] = None
+
+
+def sensor_descriptions(
+    currency: str, energy_scale: str
+) -> tuple[EntsoeEntityDescription, ...]:
+    """Construct EntsoeEntityDescription."""
+    return (
+        EntsoeEntityDescription(
+            key="current_price",
+            name="Current electricity price (all-in)",
+            native_unit_of_measurement=f"{currency}/{energy_scale}",
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:currency-eur",
+            suggested_display_precision=3,
+            value_fn=lambda coordinator: coordinator.get_current_price(),
+        ),
+        EntsoeEntityDescription(
+            key="current_spot_price",
+            name="Current electricity spot price",
+            native_unit_of_measurement=f"{currency}/{energy_scale}",
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:currency-eur",
+            suggested_display_precision=3,
+            value_fn=lambda coordinator: coordinator.get_current_raw_price(),
+        ),
+        EntsoeEntityDescription(
+            key="next_hour_price",  # Technically this is the price for the next period, which may be 15 or 60 minutes. Keeping for backwards compatibility.
+            name="Next hour electricity price (all-in)",
+            native_unit_of_measurement=f"{currency}/{energy_scale}",
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:currency-eur",
+            suggested_display_precision=3,
+            value_fn=lambda coordinator: coordinator.get_next_price(),
+        ),
+        EntsoeEntityDescription(
+            key="min_price",
+            name="Lowest energy price",
+            native_unit_of_measurement=f"{currency}/{energy_scale}",
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:currency-eur",
+            suggested_display_precision=3,
+            value_fn=lambda coordinator: coordinator.get_min_price(),
+        ),
+        EntsoeEntityDescription(
+            key="max_price",
+            name="Highest energy price",
+            native_unit_of_measurement=f"{currency}/{energy_scale}",
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:currency-eur",
+            suggested_display_precision=3,
+            value_fn=lambda coordinator: coordinator.get_max_price(),
+        ),
+        EntsoeEntityDescription(
+            key="avg_price",
+            name="Average electricity price",
+            native_unit_of_measurement=f"{currency}/{energy_scale}",
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:currency-eur",
+            suggested_display_precision=3,
+            value_fn=lambda coordinator: coordinator.get_avg_price(),
+        ),
+        EntsoeEntityDescription(
+            key="percentage_of_max",
+            name="Current percentage of highest electricity price",
+            native_unit_of_measurement=f"{PERCENTAGE}",
+            icon="mdi:percent",
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+            value_fn=lambda coordinator: coordinator.get_percentage_of_max(),
+        ),
+        EntsoeEntityDescription(
+            key="percentage_of_range",
+            name="Current percentage in electricity price range",
+            native_unit_of_measurement=f"{PERCENTAGE}",
+            icon="mdi:percent",
+            suggested_display_precision=1,
+            state_class=SensorStateClass.MEASUREMENT,
+            value_fn=lambda coordinator: coordinator.get_percentage_of_range(),
+        ),
+        EntsoeEntityDescription(
+            key="highest_price_time_today",
+            name="Time of highest price",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            icon="mdi:clock",
+            value_fn=lambda coordinator: coordinator.get_max_time(),
+        ),
+        EntsoeEntityDescription(
+            key="lowest_price_time_today",
+            name="Time of lowest price",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            icon="mdi:clock",
+            value_fn=lambda coordinator: coordinator.get_min_time(),
+        ),
+        EntsoeEntityDescription(
+            key="current_provider",
+            name="Price data provider",
+            icon="mdi:server",
+            value_fn=lambda coordinator: coordinator.current_provider_name,
+        ),
+    )
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up ENTSO-e price sensor entries."""
+    entsoe_coordinator = hass.data[DOMAIN][config_entry.entry_id]
+
+    entities = []
+    entity = {}
+    for description in sensor_descriptions(
+        currency=config_entry.options.get(CONF_CURRENCY, DEFAULT_CURRENCY),
+        energy_scale=config_entry.options.get(CONF_ENERGY_SCALE, DEFAULT_ENERGY_SCALE),
+    ):
+        entity = description
+        entities.append(
+            EntsoeSensor(
+                entsoe_coordinator, entity, config_entry.options[CONF_ENTITY_NAME]
+            )
+        )
+
+    # Add an entity for each sensor type
+    async_add_entities(entities, True)
+
+
+class EntsoeSensor(CoordinatorEntity, RestoreSensor):
+    """Representation of a ENTSO-e sensor."""
+
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: EntsoeCoordinator,
+        description: EntsoeEntityDescription,
+        name: str = "",
+    ) -> None:
+        """Initialize the sensor."""
+        self.description = description
+        self.last_update_success = True
+
+        if name not in (None, ""):
+            # The Id used for addressing the entity in the ui, recorder history etc.
+            self.entity_id = f"{DOMAIN}.{slugify(name)}_{slugify(description.name)}"
+            # unique id in .storage file for ui configuration.
+            self._attr_unique_id = f"{DOMAIN}.{name}_{description.key}"
+            self._attr_name = f"{description.name} ({name})"
+        else:
+            self.entity_id = f"{DOMAIN}.{slugify(description.name)}"
+            self._attr_unique_id = f"{DOMAIN}.{description.key}"
+            self._attr_name = f"{description.name}"
+
+        self.entity_description: EntsoeEntityDescription = description
+        self._attr_icon = description.icon
+        self._attr_suggested_display_precision = description.suggested_display_precision
+
+        self._attr_device_info = DeviceInfo(
+            entry_type=DeviceEntryType.SERVICE,
+            identifiers={
+                (
+                    DOMAIN,
+                    f"{coordinator.config_entry.entry_id}_{DOMAIN}",
+                )
+            },
+            manufacturer="Energy Spot Prices",
+            model="",
+            name="Energy Spot Prices" + ((" (" + name + ")") if name != "" else ""),
+        )
+
+        self._update_job = HassJob(self.async_schedule_update_ha_state)
+        self._unsub_update = None
+
+        super().__init__(coordinator)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last known state on startup when no live data is available yet."""
+        await super().async_added_to_hass()
+        if not self.coordinator.data:
+            if (last_sensor_data := await self.async_get_last_sensor_data()) is not None:
+                self._attr_native_value = last_sensor_data.native_value
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel scheduled updates when entity is removed."""
+        if self._unsub_update:
+            self._unsub_update()
+            self._unsub_update = None
+        await super().async_will_remove_from_hass()
+
+    async def async_update(self) -> None:
+        """Get the latest data and updates the states."""
+        # _LOGGER.debug(f"update function for '{self.entity_id} called.'")
+
+        # Cancel the currently scheduled event if there is any
+        if self._unsub_update:
+            self._unsub_update()
+            self._unsub_update = None
+
+        # Schedule the next update after the interval
+        self._unsub_update = event.async_track_point_in_utc_time(
+            self.hass,
+            self._update_job,
+            bucket_time(utcnow(), self.coordinator.period_minutes)
+            + self.coordinator.update_interval,
+        )
+
+        # ensure the calculated data is refreshed
+        await self.coordinator.sync_calculator()
+
+        if self.coordinator.data is not None:
+            value: Any = None
+            try:
+                value = self.entity_description.value_fn(self.coordinator)
+                self._attr_native_value = value
+                self.last_update_success = True
+                _LOGGER.debug(f"updated '{self.entity_id}' to value: {value}")
+            except Exception as exc:
+                self.last_update_success = False
+                _LOGGER.warning(
+                    f"Unable to update entity '{self.entity_id}', value: {value} and error: {exc}"
+                )
+        else:
+            self.last_update_success = False
+ 
+    @property
+    def extra_state_attributes(self):
+        if self.description.key != "avg_price":
+            return None
+        if self.native_value is None or self.coordinator.data is None:
+            return None
+        return {
+            "prices_today": self.coordinator.get_prices_today(),
+            "prices_tomorrow": self.coordinator.get_prices_tomorrow(),
+            "prices": self.coordinator.get_prices(),
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.last_update_success

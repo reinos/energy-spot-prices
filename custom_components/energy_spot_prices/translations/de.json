@@ -1,0 +1,83 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Bereich und Preisauflösung konfigurieren. Alle registrierten Anbieter werden automatisch der Reihe nach versucht.",
+        "data": {
+          "area": "Bereich",
+          "advanced_options": "Ich möchte USt. (MwSt.), Vorlage und Berechnungsart definieren (nächster Schritt)",
+          "modifyer": "Preisanpassungsvorlage (Optional)",
+          "currency": "Währung des angepassten Preises (optional)",
+          "energy_scale": "Energieeinheit (optional)",
+          "name": "Name (optional)"
+        }
+      },
+      "provider_config": {
+        "description": "API-Schlüssel für jeden gewünschten Anbieter eingeben. Leer lassen, um diesen Anbieter zu überspringen.",
+        "data": {
+          "entsoe_api_key": "Mein ENTSO-e API Schlüssel"
+        }
+      },
+      "extra": {
+        "data": {
+          "VAT_value": "USt. (MwSt.) Tarif (z.B. für 20% > 0.20, 19% > 0.19, 8.1% > 0.081 usw. angeben)",
+          "modifyer": "Preisanpassungsvorlage (optional)",
+          "currency": "Währung des angepassten Preises (optional)",
+          "energy_scale": "Energieeinheit (optional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_template": "Ungültige Vorlage, siehe https://github.com/JaccoR/hass-entso-e",
+      "missing_current_price": "Wert 'current_price' fehlt in der Vorlage, siehe https://github.com/JaccoR/hass-entso-e",
+      "already_configured": "Integration mit gleichem Namen bereits vorhanden, bitte anderen Namen angeben"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Einstellungen anpassen. Alle registrierten Anbieter werden automatisch der Reihe nach versucht.",
+        "data": {
+          "area": "Bereich",
+          "modifyer": "Preisanpassungsvorlage (optional)",
+          "currency": "Währung des angepassten Preises (optional)",
+          "energy_scale": "Energieeinheit (optional)",
+          "VAT_value": "USt. (MwSt.) Tarif (z.B. für 20% > 0.20, 19% > 0.19, 8.1% > 0.081  usw. angeben)",
+          "name": "Name (optional)",
+          "entsoe_api_key": "Mein ENTSO-e API Schlüssel"
+        }
+      },
+      "provider_config": {
+        "description": "API-Schlüssel für jeden gewünschten Anbieter eingeben. Leer lassen, um diesen Anbieter zu überspringen.",
+        "data": {
+          "entsoe_api_key": "Mein ENTSO-e API Schlüssel"
+        }
+      }
+    },
+    "error": {
+      "invalid_template": "Ungültige Vorlage, siehe https://github.com/JaccoR/hass-entso-e",
+      "missing_current_price": "Wert 'current_price' fehlt in der Vorlage, siehe https://github.com/JaccoR/hass-entso-e",
+      "already_configured": "Integration mit gleichem Namen bereits vorhanden, bitte anderen Namen angeben"
+    }
+  },
+  "services": {
+    "get_energy_prices": {
+      "name": "Hole Energiepreise",
+      "description": "Hole Preise von ENTSO-e für einen bestimmten Bereich",
+      "fields": {
+        "config_entry": {
+          "name": "Konfigurationseintrag",
+          "description": "Zu verwendender Konfigurationseintrag für diesen Dienst"
+        },
+        "start": {
+          "name": "Start",
+          "description": "Beginn Datum und Zeit für angegebenen Bereich - Vorgabe ist Heute wenn keine Angabe"
+        },
+        "end": {
+          "name": "Ende",
+          "description": "Ende Datum und Zeit für angegebenen Bereich - Vorgabe ist Heute wenn keine Angabe"
+        }
+      }
+    }
+  }
+}

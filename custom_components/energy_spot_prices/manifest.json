@@ -1,0 +1,11 @@
+{
+  "domain": "energy_spot_prices",
+  "name": "Energy Spot Prices",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "",
+  "requirements": [],
+  "version": "1.0.0"
+}
