@@ -175,6 +175,10 @@ class EntsoeSensor(CoordinatorEntity, RestoreSensor):
     """Representation of a ENTSO-e sensor."""
 
     _attr_attribution = ATTRIBUTION
+    # These attributes are recomputed from the coordinator on every update and can grow
+    # past the recorder's 16KB per-attribute limit (e.g. with 15-minute price intervals),
+    # so they don't need to be persisted to the recorder's history.
+    _unrecorded_attributes = frozenset({"prices_today", "prices_tomorrow", "prices"})
 
     def __init__(
         self,
@@ -185,15 +189,19 @@ class EntsoeSensor(CoordinatorEntity, RestoreSensor):
         """Initialize the sensor."""
         self.description = description
         self.last_update_success = True
+        # Once we've ever had a value, keep reporting it (and its unit) on transient update
+        # failures instead of going unavailable — flapping to unavailable drops the recorded
+        # unit_of_measurement, which breaks long-term statistics compilation.
+        self._has_value = False
 
         if name not in (None, ""):
             # The Id used for addressing the entity in the ui, recorder history etc.
-            self.entity_id = f"{DOMAIN}.{slugify(name)}_{slugify(description.name)}"
+            self.entity_id = f"sensor.{slugify(name)}_{slugify(description.name)}"
             # unique id in .storage file for ui configuration.
             self._attr_unique_id = f"{DOMAIN}.{name}_{description.key}"
             self._attr_name = f"{description.name} ({name})"
         else:
-            self.entity_id = f"{DOMAIN}.{slugify(description.name)}"
+            self.entity_id = f"sensor.{slugify(description.name)}"
             self._attr_unique_id = f"{DOMAIN}.{description.key}"
             self._attr_name = f"{description.name}"
 
@@ -225,6 +233,7 @@ class EntsoeSensor(CoordinatorEntity, RestoreSensor):
         if not self.coordinator.data:
             if (last_sensor_data := await self.async_get_last_sensor_data()) is not None:
                 self._attr_native_value = last_sensor_data.native_value
+                self._has_value = True
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel scheduled updates when entity is removed."""
@@ -259,6 +268,7 @@ class EntsoeSensor(CoordinatorEntity, RestoreSensor):
                 value = self.entity_description.value_fn(self.coordinator)
                 self._attr_native_value = value
                 self.last_update_success = True
+                self._has_value = True
                 _LOGGER.debug(f"updated '{self.entity_id}' to value: {value}")
             except Exception as exc:
                 self.last_update_success = False
@@ -282,5 +292,11 @@ class EntsoeSensor(CoordinatorEntity, RestoreSensor):
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        return self.last_update_success
+        """Return if entity is available.
+
+        Stays available once a value has ever been obtained (live or restored), so a
+        transient update failure doesn't drop the unit_of_measurement from the recorded
+        state and break long-term statistics. self.last_update_success still reflects
+        whether the most recent update cycle succeeded.
+        """
+        return self._has_value

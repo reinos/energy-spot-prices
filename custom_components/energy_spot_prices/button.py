@@ -45,11 +45,11 @@ class EntsoeRefreshButton(ButtonEntity):
         self.coordinator = coordinator
 
         if name not in (None, ""):
-            self.entity_id = f"{DOMAIN}.{slugify(name)}_refresh_prices"
+            self.entity_id = f"button.{slugify(name)}_refresh_prices"
             self._attr_unique_id = f"energy_spot_prices.{name}_refresh_prices"
             self._attr_name = f"Refresh prices ({name})"
         else:
-            self.entity_id = f"{DOMAIN}.refresh_prices"
+            self.entity_id = "button.refresh_prices"
             self._attr_unique_id = "energy_spot_prices.refresh_prices"
             self._attr_name = "Refresh prices"
 
