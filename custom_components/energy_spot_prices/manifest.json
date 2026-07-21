@@ -1,7 +1,7 @@
 {
   "domain": "energy_spot_prices",
   "name": "Energy Spot Prices",
-  "codeowners": [],
+  "codeowners": ["@reinos"],
   "config_flow": true,
   "documentation": "https://github.com/reinos/energy-spot-prices",
   "iot_class": "cloud_polling",
