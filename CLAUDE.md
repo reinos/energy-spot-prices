@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## Documentation
+
+- When a change affects behavior, providers or configuration, update `README.md` in the same change.
+
 ## Git
 
 - Never commit on your own. Always propose the commit (files and message) and wait for explicit approval before running `git commit`.
