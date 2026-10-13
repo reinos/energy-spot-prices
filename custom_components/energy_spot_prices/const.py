@@ -1,6 +1,6 @@
 from homeassistant.const import CURRENCY_EURO
 
-ATTRIBUTION = "Data provided by Energy Spot Prices (ENTSO-e, DAP Xadi)"
+ATTRIBUTION = "Data provided by Energy Spot Prices (ENTSO-e, Nord Pool, Energy-Charts / Bundesnetzagentur | SMARD.de CC BY 4.0, DAP Xadi)"
 DOMAIN = "energy_spot_prices"
 UNIQUE_ID = f"{DOMAIN}_component"
 COMPONENT_TITLE = "Energy Spot Prices"

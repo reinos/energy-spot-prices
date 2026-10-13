@@ -208,10 +208,11 @@ class EntsoeCoordinator(DataUpdateCoordinator):
         self._force_update = True
         await self.async_request_refresh()
 
-    # Fetch prices by calling all configured providers and merging their results.
-    # Providers that successfully respond are not retried (their data won't change);
-    # only providers that raised network exceptions are retried in subsequent attempts.
-    # We stop early when combined data is sufficient, or when all providers have
+    # Fetch prices by walking the configured providers in priority order as a fallback
+    # chain. Each provider only fills in timestamps that higher-priority providers did
+    # not deliver. Providers that successfully respond are not retried (their data won't
+    # change); only providers that raised exceptions are retried in subsequent attempts.
+    # We stop as soon as combined data is sufficient, or when all providers have
     # responded (no point retrying). Tomorrow's coverage is only required after 11:00.
     async def fetch_prices(self, start_date, end_date):
         now = dt.now()
@@ -221,6 +222,8 @@ class EntsoeCoordinator(DataUpdateCoordinator):
 
         combined: dict = {}
         providers_done: set = set()  # provider_ids that returned a response (even empty)
+        providers_used: set = set()  # provider_ids that contributed at least one price
+        today_hours = tomorrow_hours = 0  # coverage of combined, updated on every merge
         exc = None
 
         for attempt in range(1, FETCH_RETRY_ATTEMPTS + 1):
@@ -257,8 +260,12 @@ class EntsoeCoordinator(DataUpdateCoordinator):
                     )
                     continue  # will be retried on next attempt
 
-                # Merge this provider's data into the combined result
-                combined.update(result)
+                # Merge this provider's data into the combined result; data from
+                # higher-priority providers is never overwritten.
+                for timestamp, price in result.items():
+                    if timestamp not in combined:
+                        combined[timestamp] = price
+                        providers_used.add(provider.provider_id)
                 providers_done.add(provider.provider_id)
                 today_h = sum(1 for k in result if k.astimezone().date() == today_date)
                 tomorrow_h = sum(1 for k in result if k.astimezone().date() == tomorrow_date)
@@ -268,19 +275,19 @@ class EntsoeCoordinator(DataUpdateCoordinator):
                     f"combined total: {len(combined)}"
                 )
 
-            # Evaluate combined coverage after this round
-            today_hours = sum(1 for k in combined if k.astimezone().date() == today_date)
-            tomorrow_hours = sum(1 for k in combined if k.astimezone().date() == tomorrow_date)
-            today_ok = today_hours >= MIN_HOURS
-            tomorrow_ok = not tomorrow_needed or tomorrow_hours >= MIN_HOURS
+                # Stop walking the chain as soon as coverage is sufficient
+                today_hours = sum(1 for k in combined if k.astimezone().date() == today_date)
+                tomorrow_hours = sum(1 for k in combined if k.astimezone().date() == tomorrow_date)
+                today_ok = today_hours >= MIN_HOURS
+                tomorrow_ok = not tomorrow_needed or tomorrow_hours >= MIN_HOURS
 
-            if today_ok and tomorrow_ok:
-                # Full coverage — success
-                persistent_notification.async_dismiss(self.hass, self._fetch_failed_notification_id)
-                self.current_provider_name = " + ".join(
-                    p.name for p in self.providers if p.provider_id in providers_done
-                ) or None
-                return combined
+                if today_ok and tomorrow_ok:
+                    # Full coverage — success
+                    persistent_notification.async_dismiss(self.hass, self._fetch_failed_notification_id)
+                    self.current_provider_name = " + ".join(
+                        p.name for p in self.providers if p.provider_id in providers_used
+                    ) or None
+                    return combined
 
             # If all providers have already responded, no point doing more rounds
             if len(providers_done) >= len(self.providers):
@@ -291,7 +298,7 @@ class EntsoeCoordinator(DataUpdateCoordinator):
                 )
                 if combined:
                     self.current_provider_name = " + ".join(
-                        p.name for p in self.providers if p.provider_id in providers_done
+                        p.name for p in self.providers if p.provider_id in providers_used
                     ) or None
                     return combined
                 break  # all responded but nothing — fall through to degraded mode
@@ -306,7 +313,7 @@ class EntsoeCoordinator(DataUpdateCoordinator):
                 f"({len(combined)} entries; some providers may still be unavailable)."
             )
             self.current_provider_name = " + ".join(
-                p.name for p in self.providers if p.provider_id in providers_done
+                p.name for p in self.providers if p.provider_id in providers_used
             ) or None
             return combined
 

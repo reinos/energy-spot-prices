@@ -9,6 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    AREA_INFO,
     CALCULATION_MODE,
     CONF_AREA,
     CONF_ENERGY_SCALE,
@@ -44,6 +45,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         provider_ids=list(PROVIDER_REGISTRY.keys()),
         provider_config=entry.options.get(CONF_PROVIDER_CONFIG, {}),
         period=period,
+        area=AREA_INFO[area]["code"],
     )
     entsoe_coordinator = EntsoeCoordinator(
         hass,

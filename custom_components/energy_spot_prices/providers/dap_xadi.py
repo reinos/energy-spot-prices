@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 from aiohttp import ClientSession
 
-from ..utils import average_to_interval, get_interval_minutes
 from .base import PriceProvider, PriceProviderError
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,6 +48,7 @@ class DapXadiProvider(PriceProvider):
     provider_id = "dap_xadi"
     name = "DAP Xadi"
     requires_api_key = False
+    supported_areas = frozenset(AREA_MAP)
 
     async def query_day_ahead_prices(
         self, area: str, start: datetime, end: datetime
@@ -63,7 +63,6 @@ class DapXadiProvider(PriceProvider):
         # Convert "PT60M" → "60M", "PT15M" → "15M" for the ?interval= param.
         interval = re.sub(r"^PT", "", self.configuration_period)
         params = {"interval": interval}
-        expected_interval = get_interval_minutes(self.configuration_period)
 
         result: dict[datetime, float] = {}
         async with ClientSession() as session:
@@ -77,21 +76,6 @@ class DapXadiProvider(PriceProvider):
                     ts = datetime.fromisoformat(point["time"].replace("Z", "+00:00"))
                     result[ts] = point["priceMwh"]
 
-        if not result:
-            return result
-
         # Defensive averaging: if the API returned a different resolution than configured,
-        # average into the expected buckets (mirrors the pattern in EntsoeProvider).
-        timestamps = sorted(result.keys())
-        if len(timestamps) >= 2:
-            actual_interval = int(
-                (timestamps[1] - timestamps[0]).total_seconds() / 60
-            )
-            if actual_interval != expected_interval:
-                _LOGGER.debug(
-                    f"DAP Xadi returned {actual_interval}m intervals, "
-                    f"averaging into {expected_interval}m buckets."
-                )
-                result = average_to_interval(result, expected_interval=expected_interval)
-
-        return result
+        # average into the expected buckets.
+        return self._to_configured_interval(result)

@@ -12,7 +12,9 @@ Custom component for Home Assistant to fetch day-ahead electricity spot prices f
 
 ## Data providers
 
-The integration supports two data providers that are tried in order on every fetch. When a provider fails or returns insufficient data, the next one is used automatically.
+The integration supports multiple data providers that form a fallback chain. On every fetch they are tried in order; as soon as the combined data covers today (and tomorrow, after 11:00) the remaining providers are skipped. A lower-priority provider only fills in prices that a higher-priority provider did not deliver.
+
+All providers return the raw day-ahead market price in EUR/MWh (no supplier markup, energy tax or VAT); those are applied by the integration's VAT setting and price modifier template. Providers that do not cover the configured area are skipped automatically.
 
 ### 1. ENTSO-e Transparency Platform (primary)
 
@@ -20,11 +22,19 @@ Prices are fetched directly from the official [ENTSO-e Transparency Platform](ht
 
 **Requires an API key.** To request one, register on the Transparency Platform and send an email to transparency@entsoe.eu with "Restful API access" in the subject line. Include the email address used during registration in the body.
 
-> **Note:** The ENTSO-e API is known to be unreliable — it can be slow, return incomplete data, or be completely unavailable for hours at a time. The integration handles this automatically by falling back to the DAP Xadi provider.
+> **Note:** The ENTSO-e API is known to be unreliable — it can be slow, return incomplete data, or be completely unavailable for hours at a time. The integration handles this automatically by falling back to the providers below, which do not depend on ENTSO-e.
 
-### 2. DAP Xadi (fallback)
+### 2. Nord Pool (fallback)
 
-[dap.xadi.eu](https://dap.xadi.eu) is an ENTSO-e backed community API that requires no API key. It is used automatically as a fallback when ENTSO-e is unavailable or returns insufficient data.
+The public data portal of the [Nord Pool](https://data.nordpoolgroup.com) power exchange, without API key. Prices come straight from the exchange and are typically available shortly after the day-ahead auction. Covers AT, BE, BG, DE-LU, DK1/2, EE, FI, FR, HR, LT, LV, NL, NO1–5, PL and SE1–4.
+
+### 3. Energy-Charts (fallback)
+
+[Energy-Charts](https://energy-charts.info) by Fraunhofer ISE offers a free API without API key. Prices are sourced from Bundesnetzagentur | [SMARD.de](https://www.smard.de) and licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Only the CC BY 4.0 licensed zones are used: AT, BE, CH, CZ, DE-LU, DK1/2, FR, HU, IT-North, NL, NO2, PL, SE4 and SI. Tomorrow's prices tend to appear here later than at Nord Pool. The API is rate limited, which is not an issue at the integration's fetch cadence.
+
+### 4. DAP Xadi (fallback)
+
+[dap.xadi.eu](https://dap.xadi.eu) is an ENTSO-e backed community API that requires no API key. Because it relies on ENTSO-e data, it is the last resort in the chain.
 
 DAP Xadi aggregates multi-zone countries (Denmark, Sweden, Norway) to a single national price — prices may differ slightly from a specific ENTSO-e bidding zone for those countries.
 
@@ -33,9 +43,9 @@ DAP Xadi aggregates multi-zone countries (Denmark, Sweden, Norway) to a single n
 On every scheduled update (every 60 minutes):
 
 1. The integration checks whether sufficient data is already cached. If today's prices are complete and tomorrow's prices are either not yet needed (before 11:00) or already cached, the fetch is skipped entirely.
-2. If a fetch is needed, each provider is tried in order (ENTSO-e → DAP Xadi). A provider that returns a successful response is not retried in subsequent attempts.
-3. The data from all responding providers is merged. The integration stops early when coverage is sufficient.
-4. If all providers fail, the integration retries up to 3 times (with a 2-second delay between attempts).
+2. If a fetch is needed, the providers are tried in order (ENTSO-e → Nord Pool → Energy-Charts → DAP Xadi). The integration stops as soon as the combined data is sufficient, so the fallbacks are only contacted when needed. A provider that returns a successful response is not retried in subsequent attempts.
+3. Data from the responding providers is merged, with higher-priority providers taking precedence.
+4. If coverage is still insufficient, failed providers are retried up to 3 times (with a 2-second delay between attempts).
 5. When all retries are exhausted and no new data was received, the integration continues running on the last successfully fetched data (degraded mode) as long as that data covers future hours. A persistent notification is created in Home Assistant to inform you of the failure.
 
 The active provider(s) are exposed via the **Price data provider** sensor.
@@ -94,7 +104,7 @@ Download this repository and place the contents of `custom_components` in your o
 4. Follow the configuration flow
 
 In the config flow you configure:
-- **ENTSO-e API key** (optional — leave blank to use DAP Xadi only)
+- **ENTSO-e API key** (optional — leave blank to use only the free providers)
 - **Country / bidding zone**
 - **Price resolution** (60-minute or 15-minute intervals, where supported)
 - **Price modifier template** and resulting currency (optional)
